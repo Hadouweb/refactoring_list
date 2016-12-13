@@ -87,41 +87,8 @@ void		free_ptr(void *content)
 
 int 		main(int ac, char **av)
 {
-	if (ac > 2)
+	if (ac > 2 && av[1])
 	{
-		int 	fd1;
-		int 	fd2;
-		char 	*line;
-
-		fd1 = open(av[1], O_RDONLY);
-		fd2 = open(av[2], O_RDONLY);
-
-		if (fd1 == -1)
-			printf("ERROR FD\n");
-
-		line = NULL;
-
-		get_next_line(fd1, &line);
-		ft_putendl(line);
-		ft_strdel(&line);
-
-		get_next_line(fd1, &line);
-		ft_putendl(line);
-		ft_strdel(&line);
-
-		for (int i = 0; i < 100; i++) {
-			get_next_line(fd2, &line);
-			ft_putendl(line);
-			ft_strdel(&line);
-		}
-
-		get_next_line(fd1, &line);
-		ft_putendl(line);
-		ft_strdel(&line);
-
-		get_next_line(fd2, &line);
-		ft_putendl(line);
-		ft_strdel(&line);
 
 	}
 	return (0);
