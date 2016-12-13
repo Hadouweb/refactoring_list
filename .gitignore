@@ -1,0 +1,4 @@
+*.o
+.idea
+linked_list
+linked_list.dSYM
