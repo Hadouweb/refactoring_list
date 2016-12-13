@@ -12,14 +12,16 @@ LIB = -L$(LIBFTPATH) -lft
 LIBNAME = $(LIBFTPATH)/libft.a
 
 SRC = 	$(SRCPATH)/main.c\
-        $(SRCPATH)/list_push_back.c\
-        $(SRCPATH)/list_push_front.c\
-        $(SRCPATH)/list_init.c\
-        $(SRCPATH)/list_size.c\
-        $(SRCPATH)/list_del.c\
-        $(SRCPATH)/list_print.c\
-        $(SRCPATH)/list_push_before_node.c\
-        $(SRCPATH)/list_push_after_node.c\
+        $(SRCPATH)/ft_list_push_back.c\
+        $(SRCPATH)/ft_list_push_front.c\
+        $(SRCPATH)/ft_list_init.c\
+        $(SRCPATH)/ft_list_size.c\
+        $(SRCPATH)/ft_list_del.c\
+        $(SRCPATH)/ft_list_print.c\
+        $(SRCPATH)/ft_list_push_before_node.c\
+        $(SRCPATH)/ft_list_push_after_node.c\
+        $(SRCPATH)/ft_list_to_tab.c\
+        $(SRCPATH)/ft_list_str_split.c\
 
 
 OBJ = $(SRC:.c=.o)

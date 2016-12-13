@@ -97,11 +97,11 @@ void		bench_mark_new(int max)
 	while (i < max)
 	{
 		data = make_data(i, "Hello World");
-		list_push_back(&list, &data->link);
+		ft_list_push_back(&list, &data->link);
 		i++;
 	}
 	//list_print(list->head, print_data);
-	list_del(&list, del_data);
+	//list_del(&list, del_data);
 	//list_print(list->head, print_data);
 }
 
@@ -114,13 +114,13 @@ void		bench_mark_old(int max)
 	while (i < max)
 	{
 		data = make_data_old(i, "Hello World");
-		ft_lstd_pushback(&list, data, sizeof(t_data_old));
+		ft_lstd_pushback_alloc(&list, data, sizeof(t_data_old));
 		i++;
 	}
 	//ft_lstd_print(list, print_data_old, 0);
 }
 
-#define MAX_SIM 10000000
+#define MAX_SIM 1000000
 
 /*int 		main()
 {
@@ -128,24 +128,26 @@ void		bench_mark_old(int max)
 	bench_mark_new(MAX_SIM);
 	double	end_time1 = (clock() - time_begin1) / 1000000.0f;
 
-	//double	time_begin2 = clock();
-	//bench_mark_old(MAX_SIM);
-	//double	end_time2 = (clock() - time_begin2) / 1000000.0f;
+	double	time_begin2 = clock();
+	bench_mark_old(MAX_SIM);
+	double	end_time2 = (clock() - time_begin2) / 1000000.0f;
 
 	printf("Pour %d\n", MAX_SIM);
 	printf("\tNEW - %f seconds\n", end_time1);
-	//printf("\tOLD - %f seconds\n", end_time2);
+	printf("\tOLD - %f seconds\n", end_time2);
 
 	//list_print(list, print_data);
 	return (0);
 }*/
 
-int 		main()
+
+/*int 		main()
 {
 	t_data	*data1 = make_data(42, "Coucou");
 	t_data	*data2 = make_data(21, "Hello");
 	t_data	*data3 = make_data(7, "Hey");
 	t_lst	*list = NULL;
+	void	**tab;
 
 	list_push_back(&list, &data1->link);
 	list_push_back(&list, &data2->link);
@@ -154,7 +156,49 @@ int 		main()
 
 	list_print(list->head, print_data);
 	printf("list size : [%lu]\n", list_size(list));
+	tab = list_to_tab(list);
+
+	int i = 0;
+	while (tab[i])
+	{
+		print_data(tab[i]);
+		i++;
+	}
+
+	free(tab);
+
 	list_del(&list, del_data);
 
+	return (0);
+}*/
+
+void		putstr(void *content)
+{
+	t_str_linked 	*n;
+
+	n = (t_str_linked *)content;
+	ft_putstr(n->str);
+}
+
+void		free_ptr(void *content)
+{
+	t_str_linked	*n;
+
+	n = (t_str_linked*)content;
+	free(n->str);
+	free(n);
+}
+
+int 		main(int ac, char **av)
+{
+	if (ac > 1)
+	{
+		t_lst	*list = NULL;
+
+		printf("split this : %s\n", av[1]);
+		list = ft_list_str_split(av[1], ' ');
+		ft_list_print(list->head, putstr);
+		ft_list_del(&list, free_ptr);
+	}
 	return (0);
 }
