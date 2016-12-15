@@ -1,52 +1,1215 @@
+#include <stdlib.h>
+#include <stdio.h>
+#include <string.h>
+#include <math.h>
+#include <time.h>
+
+enum e_type
+{
+	WIZARD,
+	OP_WIZARD,
+	SNAFFLE,
+	BLUDGER
+};
+
+enum e_action
+{
+	THROW,
+	MOVE,
+	FLIPENDO
+};
+
+enum col_type
+{
+	C_NONE,
+	C_WALL,
+	C_SNAFFLE
+};
+
+#define MAX_ACTION 100
+#define MAX_ENTITY 20
 
 
+#define NB_ANGLE 36
+#define PI 3.14159265
+
+#define NB_PREV_COL 100
+
+#define W_MAX 50000
+
+typedef struct			s_point
+{
+	double 				x;
+	double 				y;
+}						t_point;
+
+typedef struct			s_vector
+{
+	double 				x;
+	double 				y;
+}						t_vector;
+
+typedef struct			s_entity
+{
+	int 				index;
+	int 				entityId;
+	char 				entityType[21];
+	t_point				p;
+	t_point				v;
+	int 				state;
+	struct s_entity 	*in_wizard;
+	struct s_entity		*have_snaffle;
+	enum e_type			type;
+	int 				exist;
+	int					target_index;
+	int 				bludger_last_hit_index;
+	double 				r;
+	double				m;
+	int					timer_captured_snaffle;
+	int					can_capture;
+}						t_entity;
+
+typedef struct 			s_collision
+{
+	t_entity			*a;
+	t_entity			*b;
+	double				t;
+	enum col_type		type;
+}						t_collision;
+
+typedef struct 			s_action
+{
+	t_entity 			*src;
+	char 				str[50];
+	int 				weight;
+	int 				cost;
+	t_entity			*target_entity;
+	t_point				dest;
+	enum e_action		type;
+}						t_action;
+
+typedef struct 			s_board
+{
+	t_entity			entity[MAX_ENTITY];
+	int 				nb_entity;
+	int 				mana;
+	int 				me_goal;
+	int 				op_goal;
+	int 				entity_id_test;
+}						t_board;
+
+typedef struct 			s_game
+{
+	int 				nb_entity;
+	int					nb_action;
+	int 				my_id;
+	t_entity			entity[MAX_ENTITY];
+	t_action			action[MAX_ACTION];
+	t_point				ennemy_goal;
+	t_point				me_goal;
+	int 				mana;
+	char 				action_already_use[50];
+	t_board				board;
+	double				time_begin;
+	t_entity			*wizard1;
+	t_entity			*wizard2;
+}						t_game;
+/**
+ *********************** DEBUG *********************
+**/
+char 		*get_str_enum_type(int t)
+{
+	if (t == WIZARD)
+		return ("WIZARD");
+	if (t == OP_WIZARD)
+		return ("OPPONENT_WIZARD");
+	if (t == SNAFFLE)
+		return ("SNAFFLE");
+	if (t == BLUDGER)
+		return ("BLUDGER");
+	return ("NULL");
+}
+
+void		debug_print_entity(t_entity e)
+{
+	fprintf(stderr, "entityId: %d\n", e.entityId);
+	fprintf(stderr, "entityType: %s\n", e.entityType);
+	fprintf(stderr, "type: %s\n", get_str_enum_type(e.type));
+	fprintf(stderr, "x: %d y: %d\n", (int)e.p.x, (int)e.p.y);
+	fprintf(stderr, "vx: %d vy: %d\n", (int)e.v.x, (int)e.v.y);
+	fprintf(stderr, "state %d\n", e.state);
+	if (e.in_wizard)
+		fprintf(stderr, "in_wizard %d\n", e.in_wizard->entityId);
+	if (e.have_snaffle)
+		fprintf(stderr, "have_snaffle %d\n", e.have_snaffle->entityId);
+	if (e.target_index > -1)
+		fprintf(stderr, "target %d\n", e.target_index);
+	fprintf(stderr, "\n");
+}
+
+void		debug_print_entity_one(t_entity e[MAX_ENTITY], int nb_entity, int id)
+{
+	if (e == NULL)
+		return ;
+	for (int i = 0; i < nb_entity; i++)
+	{
+		if (id == e[i].entityId)
+			debug_print_entity(e[i]);
+	}
+}
+
+void		debug_print_entity_all(t_entity e[MAX_ENTITY], int nb_entity, int only_me)
+{
+	if (e == NULL)
+		return ;
+	for (int i = 0; i < nb_entity; i++)
+	{
+		if (only_me == 1 && e[i].type == WIZARD)
+			debug_print_entity(e[i]);
+		else if (only_me != 1)
+			debug_print_entity(e[i]);
+	}
+}
+
+void		debug_print_action(t_action action)
+{
+	fprintf(stderr, "str: %s\n", action.str);
+	fprintf(stderr, "weight: %d\n", action.weight);
+	fprintf(stderr, "src entityID: %d\n", action.src->entityId);
+	fprintf(stderr, "cost: %d\n", action.cost);
+	fprintf(stderr, "dest: %d %d\n", (int)action.dest.x, (int)action.dest.y);
+	if (action.target_entity)
+		fprintf(stderr, "target_entity: %d\n", action.target_entity->entityId);
+	fprintf(stderr, "\n");
+}
+
+void		debug_print_action_all(t_action action[MAX_ACTION], int nb_action)
+{
+	for (int i = 0; i < nb_action; i++)
+	{
+		debug_print_action(action[i]);
+		fprintf(stderr, "\n");
+	}
+}
+/**
+ ********************* END DEBUG ********************
+**/
+
+/**
+ ************************ UTIL **********************
+**/
+double		get_distance(t_point a, t_point b)
+{
+	double distance = sqrt((b.x - a.x) * (b.x - a.x) + (b.y - a.y) * (b.y - a.y));
+	return (distance);
+}
+
+double		get_distance2(t_point a, t_point b)
+{
+	double distance = (b.x - a.x) * (b.x - a.x) + (b.y - a.y) * (b.y - a.y);
+	return (distance);
+}
+
+double      limit_time(clock_t begin)
+{
+	return (double)(clock() - begin) / 1000;
+}
+
+double 		is_align(t_point a, t_point b, t_point c)
+{
+	int		d1 = (a.x - b.x);
+	int		d2 = (a.x - c.x);
+	double 	m1 = 0;
+	double 	m2 = 0;
+	if (d1 != 0)
+		m1 = (double)(a.y - b.y) / d1;
+	else
+		m1 = (double)(a.y - b.y);
+	if (d2 != 0)
+		m2 = (double)(a.y - c.y) / d2;
+	else
+		m2 = (double)(a.y - c.y);
+	return (fabs(m1 - m2));
+}
+
+double		get_flipendo_push(t_point a, t_point b)
+{
+	double dist = get_distance(a, b);
+	if (dist == 0)
+		return (0);
+	double d1 = (dist / 1000);
+	double d2 = d1 * d1;
+
+	double push = 1000.0f;
+
+	if (d2 != 0)
+		push = fmin(6000.0f / d2, 1000.0f);
+	return (push);
+}
+
+void		check_if_snaffle_is_in_wizard(t_game *g)
+{
+	for (int i = 0; i < g->nb_entity; i++)
+	{
+		int find = 0;
+		if (g->entity[i].type == SNAFFLE)
+		{
+			t_point p_snaffle = g->entity[i].p;
+			int y = 0;
+			while (y < g->nb_entity)
+			{
+				if (g->entity[y].type == WIZARD || g->entity[y].type == OP_WIZARD)
+				{
+					t_point p_wizard = g->entity[y].p;
+					if (p_snaffle.x == p_wizard.x && p_snaffle.y == p_wizard.y)
+					{
+						find = 1;
+						g->entity[i].in_wizard = &g->entity[y];
+						g->entity[y].have_snaffle = &g->entity[i];
+					}
+				}
+				y++;
+			}
+			if (find == 0)
+			{
+				g->entity[i].in_wizard = NULL;
+				g->entity[y - 1].have_snaffle = NULL;
+			}
+		}
+	}
+}
+
+void		update_enum_type(t_game *g)
+{
+	for (int i = 0; i < g->nb_entity; i++)
+	{
+		if (strcmp(g->entity[i].entityType, "SNAFFLE") == 0)
+		{
+			g->entity[i].m = 0.5f;
+			g->entity[i].r = 150;
+			g->entity[i].type = SNAFFLE;
+		}
+		if (strcmp(g->entity[i].entityType, "WIZARD") == 0)
+		{
+			if (g->wizard1 == NULL)
+				g->wizard1 = &g->entity[i];
+			else if (g->wizard2 == NULL)
+				g->wizard2 = &g->entity[i];
+			g->entity[i].type = WIZARD;
+			g->entity[i].r = 400;
+			g->entity[i].m = 1.0f;
+		}
+		if (strcmp(g->entity[i].entityType, "OPPONENT_WIZARD") == 0)
+		{
+			g->entity[i].type = OP_WIZARD;
+			g->entity[i].r = 400;
+			g->entity[i].m = 1.0f;
+		}
+		if (strcmp(g->entity[i].entityType, "BLUDGER") == 0)
+		{
+			g->entity[i].type = BLUDGER;
+			g->entity[i].r = 200;
+			g->entity[i].m = 8.0f;
+		}
+	}
+};
+
+t_entity	*get_entity_by_entity_id(t_entity *entity, int nb_entity, int id)
+{
+	for (int i = 0; i < nb_entity; i++)
+	{
+		if (entity[i].entityId == id)
+			return (&entity[i]);
+	}
+	return (NULL);
+}
+
+double 		get_length_vector(t_vector v)
+{
+	return (sqrt(v.x * v.x + v.y * v.y));
+}
+
+t_vector 	get_normalize(t_vector v)
+{
+	t_vector	v_norm = { 0, 0 };
+	double 		length = get_length_vector(v);
+
+	if (length != 0)
+	{
+		v_norm.x = (double)v.x / length;
+		v_norm.y = (double)v.y / length;
+	}
+	return (v_norm);
+}
+
+t_vector	get_direction(t_point a, t_point b)
+{
+	t_vector	dir;
+
+	dir.x = (double)a.x - (double)b.x;
+	dir.y = (double)a.y - (double)b.y;
+	return (dir);
+}
+
+t_vector 	get_push(t_vector vec_norm, double push, double mass)
+{
+	t_vector	v;
+
+	v.x = (vec_norm.x * push) / mass;
+	v.y = (vec_norm.y * push) / mass;
+	return (v);
+}
+
+t_point		get_closest_point(t_point a, t_point b, t_point c)
+{
+	double da = b.y - a.y;
+	double db = a.x - b.x;
+	double c1 = da * a.x + db * a.y;
+	double c2 = -db * c.x + da * c.y;
+	double det = da * da + db * db;
+	t_point	ret;
+
+	if (det != 0)
+	{
+		ret.x = (da * c1 - db * c2) / det;
+		ret.y = (da * c2 + db * c1) / det;
+	}
+	else
+	{
+		ret.x = c.x;
+		ret.y = c.y;
+	}
+
+	return (ret);
+}
+
+int			check_previous_collision(t_collision prev_col[NB_PREV_COL], t_collision current)
+{
+	for (int k = 0; k < NB_PREV_COL; k++)
+	{
+		if (prev_col[k].a && prev_col[k].b && current.a && current.b && current.t == 0.0f &&
+			prev_col[k].a->entityId == current.a->entityId &&
+			prev_col[k].b->entityId == current.b->entityId)
+		{
+			//fprintf(stderr, "FIND %d %d\n", current.a->entityId, current.b->entityId);
+			return (1);
+		}
+	}
+	return (0);
+}
+
+void		step_three_move(t_board *board, double t)
+{
+	for (int i = 0; i < board->nb_entity; i++)
+	{
+		t_entity	*e = &board->entity[i];
+		e->p.x += e->v.x * t;
+		e->p.y += e->v.y * t;
+	}
+}
+
+t_collision	make_collision(t_entity *a, t_entity *b, double t, enum col_type type)
+{
+	t_collision	col;
+
+	col.a = a;
+	col.b = b;
+	col.t = t;
+	col.type = type;
+	return (col);
+}
+
+t_collision	detect_collision_snaffle(t_entity *a, t_entity *b, enum col_type type)
+{
+	double	dist = get_distance2(a->p, b->p);
+	double	sr = (a->r) * (a->r);
+
+	if (dist < sr)
+		return (make_collision(a, b, 0.0f, type));
+	if (a->v.x == b->v.x && a->v.y == b->v.y)
+		return (make_collision(NULL, NULL, -1.0f, type));
+
+	double	x = a->p.x - b->p.x;
+	double	y = a->p.y - b->p.y;
+	double	vx = a->v.x - b->v.x;
+	double	vy = a->v.y - b->v.y;
+	t_point	myp;
+	t_point	up;
+	t_point	pb;
+
+	myp.x = x;
+	myp.y = y;
+	pb.x = x + vx;
+	pb.y = y + vy;
+	up.x = 0;
+	up.y = 0;
+
+	t_point p = get_closest_point(myp, pb, up);
+
+	double pdist = get_distance2(up, p);
+	double mypdist = get_distance2(myp, p);
+
+	if (pdist < sr)
+	{
+		double length = sqrt(vx * vx + vy * vy);
+		double backdist = sqrt(sr - pdist);
+
+		p.x = p.x - backdist * (vx / length);
+		p.y = p.y - backdist * (vy / length);
+
+		if (get_distance2(myp, p) > mypdist)
+			return (make_collision(NULL, NULL, -1.0f, type));
+
+		pdist = get_distance(p, myp);
+		if (pdist > length)
+			return (make_collision(NULL, NULL, -1.0f, type));
+
+		double	t = pdist / length;
+		return (make_collision(a, b, t, type));
+	}
+	return (make_collision(NULL, NULL, -1.0f, type));
+}
+
+t_collision	detect_collision(t_entity *a, t_entity *b, enum col_type type)
+{
+	double	dist = get_distance2(a->p, b->p);
+	double	sr = (a->r + b->r) * (a->r + b->r);
+
+	if (dist < sr)
+		return (make_collision(a, b, 0.0f, type));
+	if (a->v.x == b->v.x && a->v.y == b->v.y)
+		return (make_collision(NULL, NULL, -1.0f, type));
+
+	double	x = a->p.x - b->p.x;
+	double	y = a->p.y - b->p.y;
+	double	vx = a->v.x - b->v.x;
+	double	vy = a->v.y - b->v.y;
+	t_point	myp;
+	t_point	up;
+	t_point	pb;
+
+	myp.x = x;
+	myp.y = y;
+	pb.x = x + vx;
+	pb.y = y + vy;
+	up.x = 0;
+	up.y = 0;
+
+	t_point p = get_closest_point(myp, pb, up);
+
+	double pdist = get_distance2(up, p);
+	double mypdist = get_distance2(myp, p);
+
+	if (pdist < sr)
+	{
+		double length = sqrt(vx * vx + vy * vy);
+		double backdist = sqrt(sr - pdist);
+
+		p.x = p.x - backdist * (vx / length);
+		p.y = p.y - backdist * (vy / length);
+
+		if (get_distance2(myp, p) > mypdist)
+			return (make_collision(NULL, NULL, -1.0f, type));
+
+		pdist = get_distance(p, myp);
+		if (pdist > length)
+			return (make_collision(NULL, NULL, -1.0f, type));
+
+		double	t = pdist / length;
+		return (make_collision(a, b, t, type));
+	}
+	return (make_collision(NULL, NULL, -1.0f, type));
+}
+
+t_collision	detect_collision_wall(t_entity *e, t_entity wall[4], double t)
+{
+	t_point		next_p;
+	t_collision	first_col = make_collision(NULL, NULL, -1.0f, C_NONE);
+
+	next_p.x = e->p.x + e->v.x;
+	next_p.y = e->p.y + e->v.y;
+	if (next_p.x - e->r <= 0 && next_p.y > 2200 && next_p.y < 6200)
+		return (first_col);
+	if (next_p.x + e->r >= 16001 && next_p.y > 2200 && next_p.y < 6200)
+		return (first_col);
+	if (next_p.y - e->r <= 0)
+	{
+		//fprintf(stderr, "-- 1 --\n");
+		wall[0] = *e;
+		wall[0].p.x = e->p.x;
+		wall[0].p.y = -e->p.y;
+		wall[0].v.x = e->v.x;
+		wall[0].v.y = -e->v.y;
+		t_collision col = detect_collision(e, &wall[0], C_WALL);
+		if (col.t != -1.0f && col.t + t < 1.0f && (first_col.t == -1.0f || col.t < first_col.t))
+			first_col = col;
+	}
+	if (next_p.y + e->r >= 7501)
+	{
+		//fprintf(stderr, "-- 2 --\n");
+		wall[1] = *e;
+		wall[1].p.x = e->p.x;
+		wall[1].p.y = (7500 - e->p.y) * 2 + e->p.y;
+		wall[1].v.x = e->v.x;
+		wall[1].v.y = -e->v.y;
+		t_collision col = detect_collision(e, &wall[1], C_WALL);
+		if (col.t != -1.0f && col.t + t < 1.0f && (first_col.t == -1.0f || col.t < first_col.t))
+			first_col = col;
+	}
+	if (next_p.x - e->r <= 0)
+	{
+		//fprintf(stderr, "-- 3 --\n");
+		wall[2] = *e;
+		wall[2].p.x = -e->p.x;
+		wall[2].p.y = e->p.y;
+		wall[2].v.x = -e->v.x;
+		wall[2].v.y = e->v.y;
+		t_collision col = detect_collision(e, &wall[2], C_WALL);
+		if (col.t != -1.0f && col.t + t < 1.0f && (first_col.t == -1.0f || col.t < first_col.t))
+			first_col = col;
+	}
+	if (next_p.x + e->r >= 16001)
+	{
+		//fprintf(stderr, "-- 4 --\n");
+		wall[3] = *e;
+		wall[3].p.x = (16000 - e->p.x) * 2 + e->p.x;
+		wall[3].p.y = e->p.y;
+		wall[3].v.x = -e->v.x;
+		wall[3].v.y = e->v.y;
+		t_collision col = detect_collision(e, &wall[3], C_WALL);
+		if (col.t != -1.0f && col.t + t < 1.0f && (first_col.t == -1.0f || col.t < first_col.t))
+			first_col = col;
+	}
+	//if (first_col.a)
+	//	fprintf(stderr, "#--- %d %d %f\n", first_col.a->entityId, first_col.b->entityId, first_col.t);
+	return (first_col);
+}
+
+void		bounce_collision_wall(t_entity *a, t_entity *b)
+{
+	double 	m1 = a->m;
+	double 	m2 = b->m;
+
+	double 	mcoeff = (m1 + m2) / (m1 * m2);
+
+	double 	nx = a->p.x - b->p.x;
+	double 	ny = a->p.y - b->p.y;
+
+	double 	nxny_sqrt = nx * nx + ny * ny;
+
+	double 	dvx = a->v.x - b->v.x;
+	double 	dvy = a->v.y - b->v.y;
+
+	double 	product = nx * dvx + ny * dvy;
+
+	double 	fx = (nx * product) / (nxny_sqrt * mcoeff);
+	double 	fy = (ny * product) / (nxny_sqrt * mcoeff);
+
+	a->v.x -= fx / m1;
+	a->v.y -= fy / m1;
+
+	a->v.x -= fx / m1;
+	a->v.y -= fy / m1;
+}
+
+void		bounce_collision(t_entity *a, t_entity *b)
+{
+	double 	m1 = a->m;
+	double 	m2 = b->m;
+
+	double 	mcoeff = (m1 + m2) / (m1 * m2);
+
+	double 	nx = a->p.x - b->p.x;
+	double 	ny = a->p.y - b->p.y;
+
+	double 	nxny_sqrt = nx * nx + ny * ny;
+
+	double 	dvx = a->v.x - b->v.x;
+	double 	dvy = a->v.y - b->v.y;
+
+	double 	product = nx * dvx + ny * dvy;
+
+	double 	fx = (nx * product) / (nxny_sqrt * mcoeff);
+	double 	fy = (ny * product) / (nxny_sqrt * mcoeff);
+
+	a->v.x -= fx / m1;
+	a->v.y -= fy / m1;
+	b->v.x += fx / m2;
+	b->v.y += fy / m2;
+
+	double impulse = sqrt(fx * fx + fy * fy);
+	if (impulse < 100.0f)
+	{
+		fx = fx * 100.0f / impulse;
+		fy = fy * 100.0f / impulse;
+	}
+	a->v.x -= fx / m1;
+	a->v.y -= fy / m1;
+	b->v.x += fx / m2;
+	b->v.y += fy / m2;
+}
+
+void		capture_snaffle(t_entity *a, t_entity *b)
+{
+	if (a->can_capture == 0 && a->timer_captured_snaffle == 0)
+	{
+		b->p.x = a->p.x;
+		b->p.y = a->p.y;
+		b->v.x = a->v.x;
+		b->v.y = a->v.y;
+		b->in_wizard = a;
+		a->have_snaffle = b;
+		a->can_capture = 4;
+		a->timer_captured_snaffle = 2;
+		//fprintf(stderr, "Capture %d par %d\n", b->entityId, a->entityId);
+	}
+}
+
+void		update_bludger_target(t_entity entity[MAX_ENTITY], int nb_entity)
+{
+	for (int i = 0; i < nb_entity; i++)
+	{
+		if (entity[i].type == BLUDGER)
+		{
+			double 		dist_ref = 50000.0f;
+			int			target;
+			t_entity 	*bludger = &entity[i];
+			for (int y = 0; y < nb_entity; y++)
+			{
+				if (entity[y].type == WIZARD)
+				{
+					t_entity *wizard = &entity[y];
+					if (bludger->bludger_last_hit_index != -1 && entity[bludger->bludger_last_hit_index].entityId == wizard->entityId)
+						continue ;
+					double new_dist = get_distance(bludger->p, wizard->p);
+					if (new_dist < dist_ref)
+					{
+						dist_ref = new_dist;
+						target = y;
+					}
+				}
+			}
+			if (target != -1)
+				bludger->target_index = target;
+		}
+	}
+}
+/**
+ ********************** END UTIL *********************
+**/
+
+/**
+ ********************** ACTION **********************
+**/
+void		add_move_snaffle_action(t_game *g, int iw)
+{
+	if (g->entity[iw].state == 0)
+	{
+		for (int i = 0; i < g->nb_entity; i++)
+		{
+			t_entity	*e = &g->entity[i];
+			if (e->type == SNAFFLE)
+			{
+				int dist = get_distance(g->entity[iw].p, g->entity[i].p);
+				t_action	*action = &g->action[g->nb_action];
+				action->src = &g->entity[iw];
+				sprintf(action->str, "MOVE %d %d %d", (int)e->p.x, (int)e->p.y, 150);
+				action->target_entity = e;
+				action->cost = 0;
+				action->dest = e->p;
+				action->type = MOVE;
+				action->weight = W_MAX - dist;
+				g->nb_action++;
+			}
+		}
+	}
+}
+
+void		add_throw_action(t_game *g, int iw)
+{
+	if (g->entity[iw].state == 1)
+	{
+		t_action *action = &g->action[g->nb_action];
+		action->src = &g->entity[iw];
+		sprintf(action->str, "THROW %d %d %d", (int)g->ennemy_goal.x, (int)g->ennemy_goal.y, 500);
+		action->target_entity = g->entity[iw].have_snaffle;
+		action->cost = 0;
+		action->dest = g->ennemy_goal;
+		action->type = THROW;
+		action->weight = W_MAX;
+		g->nb_action++;
+
+		for (int i = 0; i < g->nb_entity; i++)
+		{
+			t_entity	*e = &g->entity[i];
+
+			t_action *action = &g->action[g->nb_action];
+			action->src = &g->entity[iw];
+			sprintf(action->str, "THROW %d %d %d", (int)e->p.x, (int)e->p.y, 500);
+			action->target_entity = g->entity[iw].have_snaffle;
+			action->cost = 0;
+			action->dest = e->p;
+			action->type = THROW;
+			action->weight = W_MAX;
+			g->nb_action++;
+		}
+
+		/*double 	x = g->entity[iw].p.x;
+		double 	y = g->entity[iw].p.y;
+
+		for (int i = 0; i < NB_ANGLE - 1; i++)
+		{
+			t_point	p;
+
+			p.x = x + 40000 * cos((10 * i) * (PI / 180.0));
+			p.y = y + 40000 * sin((10 * i) * (PI / 180.0));
+
+			t_action	*action = &g->action[g->nb_action];
+			action->src = &g->entity[iw];
+			sprintf(action->str, "THROW %d %d %d", (int)p.x, (int)p.y, 500);
+			action->target_entity = g->entity[iw].have_snaffle;
+			action->cost = 0;
+			action->dest = p;
+			action->type = THROW;
+			action->weight = W_MAX;
+			g->nb_action++;
+		}*/
+	}
+}
+
+void		add_flipendo_action(t_game *g, int iw)
+{
+	for (int i = 0; i < g->nb_entity; i++)
+	{
+		if (g->entity[i].type == SNAFFLE)
+		{
+			double 	align = is_align(g->entity[iw].p, g->entity[i].p, g->ennemy_goal);
+			if (align < 0.1f)
+			{
+				double push = get_flipendo_push(g->entity[iw].p, g->entity[i].p);
+				if (g->entity[i].in_wizard != NULL)
+					continue ;
+				if (push <= 300)
+					continue ;
+				if (g->ennemy_goal.x > 0 && g->entity[iw].p.x > g->entity[i].p.x)
+					continue ;
+				if (g->ennemy_goal.x == 0 && g->entity[iw].p.x < g->entity[i].p.x)
+					continue ;
+				t_action	*action = &g->action[g->nb_action];
+				action->src = &g->entity[iw];
+				sprintf(action->str, "FLIPENDO %d", g->entity[i].entityId);
+				action->target_entity = &g->entity[i];
+				action->cost = 20;
+				action->weight = W_MAX + 10;
+				g->nb_action++;
+			}
+		}
+	}
+}
+
+void		add_action(t_game *g, int iw)
+{
+	add_move_snaffle_action(g, iw);
+	add_throw_action(g, iw);
+	if (g->mana >= 20)
+		add_flipendo_action(g, iw);
+}
+
+t_action	*get_best_action(t_game *g, int iw)
+{
+	int 		weight_ref;
+	t_action	*best_action;
+
+	weight_ref = 0;
+	best_action = NULL;
+	for (int i = 0; i < g->nb_action; i++)
+	{
+		if (g->action[i].src->index == iw)
+		{
+			if (strcmp(g->action_already_use, g->action[i].str) == 0)
+				continue ;
+			if (g->action[i].cost > 0 && g->action[i].cost > g->mana)
+				continue;
+			if (best_action == NULL || g->action[i].weight >= weight_ref)
+			{
+				weight_ref = g->action[i].weight;
+				best_action = &g->action[i];
+			}
+		}
+	}
+	return (best_action);
+}
+/**
+ ******************** END ACTION *********************
+**/
 
 
+/**
+ ********************* SIMULATION *********************
+**/
 
+void		add_throw_on_board(t_board *board, t_action *action)
+{
+	t_entity	*snaffle = get_entity_by_entity_id(board->entity, board->nb_entity, action->target_entity->entityId);
 
+	t_vector	vec_norm = get_normalize(get_direction(action->dest, snaffle->p));
+	t_vector 	push = get_push(vec_norm, 500, 0.5f);
 
+	//snaffle->in_wizard->have_snaffle = NULL;
+	//snaffle->in_wizard = NULL;
+	snaffle->v.x += push.x;
+	snaffle->v.y += push.y;
+}
 
+void		add_action_on_board(t_board *board, t_action *action)
+{
+	if (action && action->type == THROW)
+		add_throw_on_board(board, action);
 
+	//debug_print_action(*action);
+	//if (action && action->type == MOVE)
+	//	add_move_on_board(board, action);
+	//if (action && action->type == FLIPENDO)
+	//	add_flipendo_on_board(board, action);
+}
 
+void		step_one_push(t_board *board)
+{
+	for(int i = 0; i < board->nb_entity; i++)
+	{
+		t_entity	*e = &board->entity[i];
+		if (e->type == BLUDGER)
+		{
+			t_vector vec_norm = get_normalize(get_direction(board->entity[e->target_index].p, e->p));
+			t_vector push = get_push(vec_norm, 1000.0f, 8.0f);
 
+			e->v.x += push.x;
+			e->v.y += push.y;
+		}
+	}
+}
 
+void		step_collision(t_game *g, t_board *board)
+{
+	double			t = 0.0f;
+	t_collision		prev_col[NB_PREV_COL];
+	t_entity		wall[4];
+	int 			find;
 
+	bzero(prev_col, sizeof(prev_col));
+	while (t < 1.0f)
+	{
+		t_collision		first_col = make_collision(NULL, NULL, -1.0f, C_NONE);
 
+		for (int i = 0; i < board->nb_entity; i++)
+		{
+			t_entity	*a = &board->entity[i];
+			for (int j = i + 1; j < board->nb_entity; j++)
+			{
+				t_entity	*b = &board->entity[j];
+				t_collision col;
+				if (a->type == OP_WIZARD || b->type == OP_WIZARD)
+					continue;
 
+				if (a->type == WIZARD && b->type == SNAFFLE)
+				{
+					if (a->have_snaffle == NULL)
+						col = detect_collision_snaffle(a, b, C_SNAFFLE);
+					if (a->in_wizard || b->in_wizard)
+						continue ;
+				}
+				else
+				{
+					col = detect_collision(a, b, C_NONE);
+					//if (col.a)
+					//	fprintf(stderr, "1-- %d %d %f\n", col.a->entityId, col.b->entityId, col.t);
+				}
+				find = check_previous_collision(prev_col, col);
+				if (find == 0 && col.t != -1.0f && col.t + t < 1.0f && (first_col.t == -1.0f || col.t < first_col.t))
+					first_col = col;
+			}
+			t_collision	col_wall = detect_collision_wall(a, wall, t);
+			find = check_previous_collision(prev_col, col_wall);
+			if (find == 0 && col_wall.t != -1.0f && col_wall.t + t < 1.0f && (first_col.t == -1.0f || col_wall.t < first_col.t))
+				first_col = col_wall;
+		}
 
+		if (first_col.t == -1.0f)
+		{
+			step_three_move(board, 1.0f - t);
+			t = 1.0f;
+		}
+		else
+		{
+			if (first_col.type == C_WALL)
+			{
+				first_col.b->p.x += first_col.b->v.x * first_col.t;
+				first_col.b->p.y += first_col.b->v.y * first_col.t;
+				step_three_move(board, first_col.t);
+				bounce_collision_wall(first_col.a, first_col.b);
+			}
+			else if (first_col.type == C_SNAFFLE)
+			{
+				step_three_move(board, first_col.t);
+				capture_snaffle(first_col.a, first_col.b);
+			}
+			else
+			{
 
+				step_three_move(board, first_col.t);
+				bounce_collision(first_col.a, first_col.b);
+				//fprintf(stderr, "2-- %d %d %f\n", first_col.a->entityId, first_col.b->entityId, first_col.t);
+			}
+			if (first_col.a->type == WIZARD && first_col.b->type == BLUDGER)
+			{
+				first_col.b->bludger_last_hit_index = first_col.a->index;
+				update_bludger_target(board->entity, board->nb_entity);
+			}
+			//fprintf(stderr, "%d sur %d\n", first_col.a->entityId, first_col.b->entityId);
+			t += first_col.t;
 
+			int i = 0;
+			while (i < NB_PREV_COL)
+			{
+				if (prev_col[i].a == NULL)
+					break ;
+				i++;
+			}
+			prev_col[i] = first_col;
+		}
+	}
+}
 
+void		step_four_friction(t_board *board)
+{
+	for(int i = 0; i < board->nb_entity; i++)
+	{
+		t_entity	*e = &board->entity[i];
+		if (e->type == OP_WIZARD)
+			continue ;
+		if (e->type == BLUDGER)
+		{
+			e->v.x = e->v.x * 0.9f;
+			e->v.y = e->v.y * 0.9f;
+		}
+		else
+		{
+			e->v.x = e->v.x * 0.75f;
+			e->v.y = e->v.y * 0.75f;
+		}
+	}
+}
 
+void		step_five_round(t_board *board)
+{
+	for (int i = 0; i < board->nb_entity; i++)
+	{
+		t_entity	*e = &board->entity[i];
+		e->p.x = round(e->p.x);
+		e->p.y = round(e->p.y);
+		e->v.x = round(e->v.x);
+		e->v.y = round(e->v.y);
+	}
+}
 
+long long 	eval(t_game *g, t_board *board, t_action *action)
+{
+	long long score = W_MAX;
+	if (action == NULL)
+		return (-1);
+	for (int i = 0; i < board->nb_entity; i++)
+	{
+		t_entity	*e = &board->entity[i];
+		if (e->type == SNAFFLE)
+		{
+			score -= get_distance(e->p, g->ennemy_goal);
+			if ((e->p.x + e->r > 16000 && g->ennemy_goal.x == 0) ||
+				(e->p.x - e->r < 0 && g->ennemy_goal.x == 16000))
+			{
+				//fprintf(stderr, "NOOOOOOOOOOOOOOOO\n");
+				score -= 50000;
+			}
+			if ((e->p.x - e->r < 0 && g->ennemy_goal.x == 0) ||
+				(e->p.x + e->r > 16000 && g->ennemy_goal.x == 16000))
+			{
+				//fprintf(stderr, "GOOOOOOOAAAALLLLL\n");
+				score = 50000;
+			}
+			else if (action->type == FLIPENDO)
+				score -= 100000;
+			//if (action->src->have_snaffle != NULL) // Probleme action src == g ...
+			//	score += 10000;
+		}
+	}
+	return (score);
+}
 
+void 		simulation(t_game *g, t_board *board, t_action *action, int nb_tower)
+{
+	int 			n = 0;
+	long long  		score = 0;
 
+	add_action_on_board(board, action);
+	while (n < nb_tower)
+	{
+		step_one_push(board);
+		step_collision(g, board);
+		step_four_friction(board);
+		step_five_round(board);
+		//update_timer(board);
+		score += eval(g, board, action);
+		//debug_print_entity_one(board->entity, board->nb_entity, 6);
+		n++;
+	}
+	action->weight += score;
+	//score += final_eval(g, board, action1, action2);
 
+}
 
+/**
+ ******************* END SIMULATION ********************
+**/
 
+void		copy_board(t_game *g, t_board *board)
+{
+	memcpy(&board->entity, &g->entity, sizeof(g->entity));
+	board->mana = g->mana;
+	board->nb_entity = g->nb_entity;
+	board->entity_id_test = -1;
+}
 
+void		run_simulation(t_game *g, t_action *action)
+{
+	t_board		board;
 
+	copy_board(g, &board);
+	simulation(g, &board, action, 5);
+}
 
+void		test_action(t_game *g)
+{
+	for (int i = 0; i < g->nb_action; i++)
+	{
+		if (g->action[i].type == THROW)
+			run_simulation(g, &g->action[i]);
+	}
+}
 
+void		run(t_game *g)
+{
+	g->nb_action = 0;
+	bzero(&g->action, sizeof(g->action));
+	add_action(g, g->wizard1->index);
+	add_action(g, g->wizard2->index);
 
+	test_action(g);
 
+	t_action	*action1 = get_best_action(g, g->wizard1->index);
+	t_action	*action2 = get_best_action(g, g->wizard2->index);
 
+	if (action1->weight >= action2->weight)
+	{
+		memcpy(&g->action_already_use, &action1->str, sizeof(char) * 50);
+		if (action1)
+			g->mana -= action1->cost;
+		action2 = get_best_action(g, g->wizard2->index);
+	}
+	else
+	{
+		memcpy(&g->action_already_use, &action2->str, sizeof(char) * 50);
+		if (action2)
+			g->mana -= action2->cost;
+		action1 = get_best_action(g, g->wizard1->index);
+	}
 
+	if (action1 == NULL)
+	{
+		printf("MOVE %d %d %d\n", (int)g->me_goal.x, (int)g->me_goal.y, 150);
+		printf("%s\n", action2->str);
+	}
+	else if (action2 == NULL)
+	{
+		printf("%s\n", action1->str);
+		printf("MOVE %d %d %d\n", (int)g->me_goal.x, (int)g->me_goal.y, 150);
+	}
+	else
+	{
+		//debug_print_action(*action1);
+		//run_simulation(g, action1);
 
+		printf("%s\n", action1->str);
+		printf("%s\n", action2->str);
+	}
+	bzero(&g->action_already_use, sizeof(char) * 50);
+}
 
+int 		main()
+{
+	t_game	g;
+	int 	tower = 0;
 
+	bzero(&g, sizeof(g));
+	scanf("%d", &g.my_id);
 
+	if (g.my_id == 0)
+	{
+		g.ennemy_goal.x = 16000;
+		g.ennemy_goal.y = 3750;
+		g.me_goal.x = 0;
+		g.me_goal.y = 3750;
+	}
+	else
+	{
+		g.ennemy_goal.x = 0;
+		g.ennemy_goal.y = 3750;
+		g.me_goal.x = 16000;
+		g.me_goal.y = 3750;
+	}
 
+	while (1)
+	{
+		int myScore;
+		int myMagic;
+		scanf("%d%d", &myScore, &myMagic);
+		int opponentScore;
+		int opponentMagic;
+		scanf("%d%d", &opponentScore, &opponentMagic);
+		g.time_begin = clock();
+		scanf("%d", &g.nb_entity);
 
-
-
-
-
-
-
-
-
-coucou
-lol
--c lol
-lol
+		for (int i = 0; i < g.nb_entity; i++)
+		{
+			//bzero(&g.entity[i], sizeof(t_entity));
+			int px, py, vy, vx;
+			scanf("%d%s%d%d%d%d%d",
+				  &(g.entity[i].entityId),
+				  g.entity[i].entityType,
+				  &px,
+				  &py,
+				  &vx,
+				  &vy,
+				  &(g.entity[i].state)
+			);
+			g.entity[i].p.x = px;
+			g.entity[i].p.y = py;
+			g.entity[i].v.x = vx;
+			g.entity[i].v.y = vy;
+			g.entity[i].exist = 1;
+			g.entity[i].index = i;
+			if (tower == 0)
+			{
+				g.entity[i].bludger_last_hit_index = -1;
+				g.entity[i].target_index = -1;
+			}
+			g.entity[i].have_snaffle = NULL;
+			g.entity[i].in_wizard = NULL;
+		}
+		update_enum_type(&g);
+		check_if_snaffle_is_in_wizard(&g);
+		update_bludger_target(g.entity, g.nb_entity);
+		run(&g);
+		g.mana++;
+		tower++;
+	}
+	return 0;
+}
